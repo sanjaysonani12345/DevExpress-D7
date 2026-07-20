@@ -421,6 +421,8 @@ type
     function CreateBlobStream(Field: TField; Mode: TBlobStreamMode): TStream; override;
     function Locate(const KeyFields: string; const KeyValues: Variant;
              Options: TLocateOptions): Boolean; override;
+    function LocateByValue(const KeyFields: string; const KeyValues: Variant;
+             Options: TLocateOptions): Boolean;
     function Lookup(const KeyFields: string; const KeyValues: Variant;
       const ResultFields: string): Variant; override;
 
@@ -2681,6 +2683,107 @@ begin
     if(RecNo <> AIndex) then
      RecNo := AIndex
     else Resync([]);
+  end;
+end;
+
+function TdxCustomMemData.LocateByValue(const KeyFields: string; const KeyValues: Variant;
+           Options: TLocateOptions): Boolean;
+
+  function GetLocateValue(const AKeyValues: Variant; AIndex: Integer): Variant;
+  begin
+    if VarIsArray(AKeyValues) then
+      Result := AKeyValues[AIndex]
+    else
+      Result := AKeyValues;
+  end;
+
+  function ValueMatches(AField: TField; const AKeyValue: Variant): Boolean;
+  var
+    AKeyStr, AFieldStr: string;
+  begin
+    if VarIsNull(AKeyValue) then
+    begin
+      Result := AField.IsNull;
+      Exit;
+    end;
+    if AField.IsNull then
+    begin
+      Result := False;
+      Exit;
+    end;
+    if (AField.DataType in ftStrings) and (Options <> []) then
+    begin
+      AKeyStr := VarToStr(AKeyValue);
+      AFieldStr := AField.AsString;
+      if loPartialKey in Options then
+        AFieldStr := Copy(AFieldStr, 1, Length(AKeyStr));
+      if loCaseInsensitive in Options then
+        Result := AnsiCompareText(AKeyStr, AFieldStr) = 0
+      else
+        Result := AnsiCompareStr(AKeyStr, AFieldStr) = 0;
+    end
+    else
+      Result := (AField.Value = AKeyValue);
+  end;
+
+var
+  AField: TField;
+  AFieldList: TdxMemDataFieldList;
+  AKeyValues: Variant;
+  ABookmark: TBookmark;
+  i: Integer;
+  AMatched: Boolean;
+begin
+  Result := False;
+  CheckBrowseMode;
+  CursorPosChanged;
+  UpdateCursorPos;
+  CheckFields(KeyFields);
+  if RecordCount = 0 then Exit;
+
+  AField := FindField(KeyFields);
+  if (AField = nil) and not VarIsArray(KeyValues) then
+    Exit;
+
+  if (AField <> nil) and VarIsArray(KeyValues) then
+    AKeyValues := KeyValues[0]
+  else
+    AKeyValues := KeyValues;
+
+  AFieldList := TdxMemDataFieldList.Create;
+  try
+    GetFieldList(AFieldList, KeyFields);
+    if AFieldList.Count = 0 then Exit;
+
+    ABookmark := Bookmark;
+    DisableControls;
+    try
+      First;
+      while not Eof do
+      begin
+        AMatched := True;
+        for i := 0 to AFieldList.Count - 1 do
+          if not ValueMatches(TField(AFieldList[i]), GetLocateValue(AKeyValues, i)) then
+          begin
+            AMatched := False;
+            Break;
+          end;
+        if AMatched then
+        begin
+          Result := True;
+          Break;
+        end;
+        Next;
+      end;
+      // On a match, stay on the record (that is the reposition); otherwise
+      // return the cursor to where it started.
+      if not Result and (ABookmark <> nil) and (Length(ABookmark) > 0) then
+        Bookmark := ABookmark;
+    finally
+      EnableControls;
+    end;
+  finally
+    AFieldList.Free;
   end;
 end;
 
